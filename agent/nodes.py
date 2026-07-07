@@ -13,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB_PATH = PROJECT_ROOT / "ecommerce.db"
 
 MAX_RETRIES = 3
+READ_ONLY_PREFIXES = ("select", "with")
 
 
 class SupportsInvoke(Protocol):
@@ -137,12 +138,42 @@ def _fallback_sql(question: str) -> str:
     return "SELECT * FROM order_facts LIMIT 10;"
 
 
+def normalize_sql(sql_query: str) -> str:
+    return sql_query.strip().rstrip(";").strip()
+
+
+def is_read_only_sql(sql_query: str) -> bool:
+    normalized = normalize_sql(sql_query).lower()
+    if not normalized:
+        return False
+    if ";" in normalized:
+        return False
+    return normalized.startswith(READ_ONLY_PREFIXES)
+
+
+def validate_sql_query(sql_query: str) -> str:
+    normalized = normalize_sql(sql_query)
+    if not normalized:
+        raise ValueError("No SQL query was generated.")
+    if not is_read_only_sql(normalized):
+        raise ValueError("Only a single read-only SELECT or WITH statement is allowed.")
+    return normalized
+
+
 def sql_executor(state: GraphState, db_path: Path | None = None) -> GraphState:
-    sql_query = state.get("sql_query", "").strip()
-    if not sql_query:
-        return {"error_message": "No SQL query was generated.", "db_result": ""}
+    try:
+        sql_query = validate_sql_query(state.get("sql_query", ""))
+    except ValueError as exc:
+        return {"error_message": str(exc), "db_result": "", "retry_count": state.get("retry_count", 0) + 1}
 
     database_path = db_path or DEFAULT_DB_PATH
+    if not database_path.exists():
+        return {
+            "db_result": "",
+            "error_message": f"Database file not found: {database_path}",
+            "retry_count": state.get("retry_count", 0) + 1,
+        }
+
     connection = duckdb.connect(str(database_path), read_only=True)
     try:
         result = connection.execute(sql_query).fetchdf()

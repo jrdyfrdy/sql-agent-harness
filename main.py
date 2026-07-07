@@ -13,7 +13,13 @@ from agent.state import initial_state
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_DB_PATH = PROJECT_ROOT / "ecommerce.db"
+
+
+def _get_bool_env(name: str, default: bool = False) -> bool:
+	value = os.getenv(name)
+	if value is None:
+		return default
+	return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class AskRequest(BaseModel):
@@ -36,19 +42,27 @@ def _build_gemini_llm() -> ChatGoogleGenerativeAI:
 	if not api_key:
 		raise RuntimeError("GOOGLE_API_KEY is required. Add it to the project .env file before starting the app.")
 
-	model_name = os.getenv("GEMINI_MODEL", "gemma-4-31b-it")  # Default to GEMMA model if not specified
+	model_name = os.getenv("GEMINI_MODEL", "gemma-4-31b-it")
 	return ChatGoogleGenerativeAI(model=model_name, temperature=0)
 
 
 def create_app() -> FastAPI:
 	load_dotenv()
 
-	database_path = Path(os.getenv("ECOMMERCE_DB_PATH", DEFAULT_DB_PATH))
+	database_path = Path(os.getenv("ECOMMERCE_DB_PATH", str(PROJECT_ROOT / "ecommerce.db")))
+	app_title = os.getenv("APP_TITLE", "Text-to-SQL Agent")
+	app_version = os.getenv("APP_VERSION", "0.1.0")
+	app_host = os.getenv("APP_HOST", "127.0.0.1")
+	app_port = int(os.getenv("APP_PORT", "8000"))
+	app_reload = _get_bool_env("APP_RELOAD", False)
 	llm = _build_gemini_llm()
 	graph = build_graph(db_path=database_path, llm=llm)
 
-	app = FastAPI(title="Text-to-SQL Agent", version="0.1.0")
+	app = FastAPI(title=app_title, version=app_version)
 	app.state.graph = graph
+	app.state.server_host = app_host
+	app.state.server_port = app_port
+	app.state.server_reload = app_reload
 
 	@app.get("/health")
 	def health_check() -> dict[str, str]:
@@ -78,4 +92,9 @@ app = create_app()
 if __name__ == "__main__":
 	import uvicorn
 
-	uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)
+	uvicorn.run(
+		"main:app",
+		host=os.getenv("APP_HOST", "127.0.0.1"),
+		port=int(os.getenv("APP_PORT", "8000")),
+		reload=_get_bool_env("APP_RELOAD", False),
+	)

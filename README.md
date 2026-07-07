@@ -25,7 +25,8 @@ sql-agent-harness/
 ├── main.py                # FastAPI app and /ask endpoint
 ├── requirements.txt
 ├── ecommerce.db           # Generated DuckDB database file
-└── .env                   # Local environment variables, including API keys
+├── .env                   # Local environment variables, including API keys
+└── .env.sample            # Template for local environment variables
 ```
 
 ### Architecture Overview
@@ -205,14 +206,19 @@ Example response:
 
 ### Environment Variables
 
-Create a `.env` file in the project root when you want to configure local overrides.
+Create a `.env` file in the project root when you want to configure local overrides. The easiest path is to copy `.env.sample` and fill in the values you want to use.
 
 Common values:
 
 ```env
 GOOGLE_API_KEY=your_gemini_api_key
 GEMINI_MODEL=gemini-1.5-pro
-ECOMMERCE_DB_PATH=C:\Users\Jared\Documents\PythonProjects\sql-agent-harness\ecommerce.db
+ECOMMERCE_DB_PATH=./ecommerce.db
+APP_TITLE=Text-to-SQL Agent
+APP_VERSION=0.1.0
+APP_HOST=127.0.0.1
+APP_PORT=8000
+APP_RELOAD=false
 ```
 
 `GOOGLE_API_KEY` is required now. If it is missing, the app will raise a startup error instead of falling back to a local generator.

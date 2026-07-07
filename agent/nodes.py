@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol, TypeVar
 
 import duckdb
+from pydantic import BaseModel, Field
 
 from .state import GraphState, SqlGeneration
 
@@ -20,43 +20,42 @@ class SupportsInvoke(Protocol):
     def invoke(self, input: Any, config: dict[str, Any] | None = None) -> Any: ...
 
 
-@dataclass(frozen=True)
-class ClarificationRule:
-    keywords: tuple[str, ...] = (
-        "something",
-        "stuff",
-        "anything",
-        "whatever",
-        "best",
-        "top",
-        "popular",
-        "interesting",
-        "recent",
+StructuredModel = TypeVar("StructuredModel", bound=BaseModel)
+
+
+class ClarificationDecision(BaseModel):
+    needs_clarification: bool = Field(..., description="Whether the question needs a clarification before SQL generation.")
+    clarification_message: str = Field(
+        default="",
+        description="A concise clarification request shown when the question is too vague.",
     )
 
-    def is_ambiguous(self, question: str) -> bool:
-        normalized = question.strip().lower()
-        if len(normalized.split()) < 4:
-            return True
-        return any(keyword in normalized for keyword in self.keywords)
+
+def _invoke_structured(llm: SupportsInvoke, schema: type[StructuredModel], prompt: str) -> StructuredModel:
+    structured_llm = llm.with_structured_output(schema) if hasattr(llm, "with_structured_output") else llm
+    response = structured_llm.invoke(prompt)
+
+    if isinstance(response, schema):
+        return response
+    if isinstance(response, dict):
+        return schema.model_validate(response)
+    return schema.model_validate(response)
 
 
-def ambiguity_router(state: GraphState) -> GraphState:
+def ambiguity_router(state: GraphState, llm: SupportsInvoke) -> GraphState:
     question = state.get("question", "")
-    rule = ClarificationRule()
-
-    if rule.is_ambiguous(question):
-        return {
-            "needs_clarification": True,
-            "clarification_message": (
-                "Please specify the metric, entity, and time range so I can build a precise SQL query. "
-                "For example: 'Show completed order revenue by customer for July 2024.'"
-            ),
-        }
+    prompt = (
+        "You are deciding whether an ecommerce analytics question is precise enough for SQL generation.\n"
+        "Return a structured object with fields 'needs_clarification' and 'clarification_message'.\n"
+        "Ask for clarification when the question is vague, underspecified, or missing a metric, time range, or entity.\n"
+        "If no clarification is needed, set 'needs_clarification' to false and 'clarification_message' to an empty string.\n"
+        f"Question: {question}"
+    )
+    decision = ClarificationDecision.model_validate(_invoke_structured(llm, ClarificationDecision, prompt))
 
     return {
-        "needs_clarification": False,
-        "clarification_message": "",
+        "needs_clarification": decision.needs_clarification,
+        "clarification_message": decision.clarification_message,
     }
 
 
@@ -70,10 +69,30 @@ def build_sql_prompt(question: str, schema_hint: str, error_message: str = "") -
 
     return (
         "You are a senior analytics engineer writing DuckDB SQL for an ecommerce schema.\n"
-        "Return only a valid structured object with fields 'query' and 'explanation'.\n"
-        "Do not wrap the SQL in markdown fences.\n"
-        "Use only read-only SQL. Avoid INSERT, UPDATE, DELETE, DROP, and CREATE.\n"
-        f"Schema reference:\n{schema_hint}\n"
+        "Follow these rules exactly:\n"
+        "- Rule for Dates and Timestamps: When querying date or timestamp columns, NEVER use BETWEEN.\n"
+        "  Always use >= for the start date and < for the day after the end date.\n"
+        "- Rule for String Filtering: When filtering by string values, always ensure case-insensitivity.\n"
+        "  Use LOWER(column_name) = 'value' or use ILIKE if supported by the SQL dialect.\n"
+        "- Rule for Status Codes: The status column in the orders and order_facts tables only contains lowercase values:\n"
+        "  ['completed', 'pending', 'canceled', 'refunded']. Always use lowercase when filtering on this column.\n"
+        "- Return only a valid structured object with fields 'query' and 'explanation'.\n"
+        "- Do not wrap the SQL in markdown fences.\n"
+        "- Use only read-only SQL. Avoid INSERT, UPDATE, DELETE, DROP, and CREATE.\n"
+        "\nFew-shot example:\n"
+        "User Question: What was the total quantity of Accessories sold to US customers in July 2024?\n"
+        "Expected SQL:\n"
+        "SELECT\n"
+        "    SUM(quantity) AS total_accessories_qty\n"
+        "FROM\n"
+        "    order_facts\n"
+        "WHERE\n"
+        "    category = 'Accessories'\n"
+        "    AND customer_country = 'US'\n"
+        "    AND LOWER(status) = 'completed'\n"
+        "    AND order_date >= '2024-07-01'\n"
+        "    AND order_date < '2024-08-01';\n"
+        f"\nSchema reference:\n{schema_hint}\n"
         f"Question: {question}\n"
         f"{retry_guidance}"
     )
@@ -93,49 +112,14 @@ view:
 """.strip()
 
 
-def sql_generator(state: GraphState, llm: SupportsInvoke | None = None) -> GraphState:
+def sql_generator(state: GraphState, llm: SupportsInvoke) -> GraphState:
     question = state.get("question", "")
     error_message = state.get("error_message", "")
 
-    if llm is None:
-        sql_text = _fallback_sql(question)
-        return {
-            "sql_query": sql_text,
-            "generation": SqlGeneration(query=sql_text, explanation="Fallback SQL generated without an LLM."),
-        }
-
     prompt = build_sql_prompt(question, schema_hint(), error_message)
-    structured = llm.invoke(prompt)
+    generation = SqlGeneration.model_validate(_invoke_structured(llm, SqlGeneration, prompt))
 
-    if isinstance(structured, SqlGeneration):
-        generation = structured
-    elif isinstance(structured, dict):
-        generation = SqlGeneration.model_validate(structured)
-    else:
-        generation = SqlGeneration.model_validate({"query": str(structured), "explanation": ""})
-
-    return {
-        "sql_query": generation.query.strip(),
-        "generation": generation,
-    }
-
-
-def _fallback_sql(question: str) -> str:
-    normalized = question.lower()
-    if "revenue" in normalized:
-        return (
-            "SELECT ROUND(SUM(line_total), 2) AS revenue "
-            "FROM order_facts "
-            "WHERE status = 'completed';"
-        )
-    if "customer" in normalized and "order" in normalized:
-        return (
-            "SELECT customer_id, first_name, last_name, COUNT(DISTINCT order_id) AS order_count "
-            "FROM order_facts "
-            "GROUP BY customer_id, first_name, last_name "
-            "ORDER BY order_count DESC, customer_id;"
-        )
-    return "SELECT * FROM order_facts LIMIT 10;"
+    return {"sql_query": generation.query.strip(), "generation": generation}
 
 
 def normalize_sql(sql_query: str) -> str:
@@ -192,14 +176,9 @@ def sql_executor(state: GraphState, db_path: Path | None = None) -> GraphState:
         connection.close()
 
 
-def final_summarizer(state: GraphState, llm: SupportsInvoke | None = None) -> GraphState:
+def final_summarizer(state: GraphState, llm: SupportsInvoke) -> GraphState:
     question = state.get("question", "")
     db_result = state.get("db_result", "")
-
-    if llm is None:
-        return {
-            "final_answer": f"Question: {question}\nResult: {db_result}",
-        }
 
     prompt = (
         "Write a concise business answer for this ecommerce question.\n"

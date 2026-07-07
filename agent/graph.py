@@ -10,13 +10,16 @@ from .nodes import ambiguity_router, final_summarizer, sql_executor, sql_generat
 from .state import GraphState, initial_state
 
 
-def build_graph(db_path: Path | None = None):
+def build_graph(db_path: Path | None = None, llm: Any | None = None):
+    if llm is None:
+        raise RuntimeError("A Gemini LLM is required to build the graph.")
+
     workflow = StateGraph(GraphState)
 
-    workflow.add_node("ambiguity_router", ambiguity_router)
-    workflow.add_node("sql_generator", sql_generator)
+    workflow.add_node("ambiguity_router", _ambiguity_node(llm))
+    workflow.add_node("sql_generator", _sql_generation_node(llm))
     workflow.add_node("sql_executor", _executor_node(db_path))
-    workflow.add_node("final_summarizer", final_summarizer)
+    workflow.add_node("final_summarizer", _summarizer_node(llm))
 
     workflow.add_edge(START, "ambiguity_router")
     workflow.add_conditional_edges(
@@ -47,6 +50,27 @@ def _executor_node(db_path: Path | None):
         return sql_executor(state, db_path=db_path)
 
     return executor
+
+
+def _ambiguity_node(llm: Any):
+    def node(state: GraphState) -> GraphState:
+        return ambiguity_router(state, llm=llm)
+
+    return node
+
+
+def _sql_generation_node(llm: Any):
+    def node(state: GraphState) -> GraphState:
+        return sql_generator(state, llm=llm)
+
+    return node
+
+
+def _summarizer_node(llm: Any):
+    def node(state: GraphState) -> GraphState:
+        return final_summarizer(state, llm=llm)
+
+    return node
 
 
 def stream_demo(question: str, db_path: Path | None = None) -> list[dict[str, Any]]:

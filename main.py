@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -30,11 +31,21 @@ class AskResponse(BaseModel):
 	final_answer: str = ""
 
 
+def _build_gemini_llm() -> ChatGoogleGenerativeAI:
+	api_key = os.getenv("GOOGLE_API_KEY")
+	if not api_key:
+		raise RuntimeError("GOOGLE_API_KEY is required. Add it to the project .env file before starting the app.")
+
+	model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+	return ChatGoogleGenerativeAI(model=model_name, temperature=0)
+
+
 def create_app() -> FastAPI:
 	load_dotenv()
 
 	database_path = Path(os.getenv("ECOMMERCE_DB_PATH", DEFAULT_DB_PATH))
-	graph = build_graph(db_path=database_path)
+	llm = _build_gemini_llm()
+	graph = build_graph(db_path=database_path, llm=llm)
 
 	app = FastAPI(title="Text-to-SQL Agent", version="0.1.0")
 	app.state.graph = graph

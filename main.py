@@ -36,7 +36,7 @@ def _build_gemini_llm() -> ChatGoogleGenerativeAI:
 	if not api_key:
 		raise RuntimeError("GOOGLE_API_KEY is required. Add it to the project .env file before starting the app.")
 
-	model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+	model_name = os.getenv("GEMINI_MODEL", "gemma-4-31b-it")  # Default to GEMMA model if not specified
 	return ChatGoogleGenerativeAI(model=model_name, temperature=0)
 
 

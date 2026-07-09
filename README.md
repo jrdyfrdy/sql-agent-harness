@@ -1,13 +1,13 @@
 ## Text-to-SQL Agent Harness
 
-Production-oriented Text-to-SQL harness built with LangGraph, DuckDB, FastAPI, and Pydantic. The agent accepts a natural-language ecommerce question, uses Gemini to decide whether clarification is needed, generates DuckDB SQL, executes it in a read-only sandbox, and returns a structured response. It also has a retry loop that can use DuckDB error messages to repair failed queries.
+Production-oriented Text-to-SQL harness built with LangGraph, DuckDB, FastAPI, and Pydantic. The agent accepts a natural-language ecommerce question, uses a configurable chat model to decide whether clarification is needed, generates DuckDB SQL, executes it in a read-only sandbox, and returns a structured response. It also has a retry loop that can use DuckDB error messages to repair failed queries.
 
 ### What it does
 
 - Seeds a local `ecommerce.db` DuckDB database with realistic ecommerce data.
 - Exposes a single `POST /ask` endpoint through FastAPI.
 - Routes the question through a LangGraph workflow.
-- Uses Gemini for clarification decisions, SQL generation, and summarization.
+- Uses a configurable LLM provider for clarification decisions, SQL generation, and summarization.
 - Executes SQL read-only and summarizes the result.
 - Rejects unsafe or multi-statement SQL before it reaches DuckDB.
 
@@ -55,17 +55,24 @@ The graph state tracks:
 
 There is also a structured SQL payload model, `SqlGeneration`, which keeps SQL generation typed instead of relying on free-form text cleanup.
 
-### Gemini-Only Decisioning
+### LLM Providers
 
-The app now requires Gemini at startup. There is no local fallback generator.
+The app requires a chat model at startup, but it is not tied to a single provider.
 
-Gemini is used to:
+Supported providers today:
+
+- Gemini
+- OpenAI-compatible chat models
+- Anthropic
+- Ollama for locally deployed models
+
+The configured provider is used to:
 
 - decide whether a question needs clarification
 - generate structured DuckDB SQL
 - write the final natural-language summary
 
-The graph expects structured Gemini output for the clarification and SQL nodes, which keeps the control flow deterministic without relying on regex cleanup or keyword heuristics.
+The graph expects structured output for the clarification and SQL nodes, which keeps the control flow deterministic without relying on regex cleanup or keyword heuristics.
 
 ### Prompt Rules
 
@@ -211,8 +218,13 @@ Create a `.env` file in the project root when you want to configure local overri
 Common values:
 
 ```env
+LLM_PROVIDER=gemini
+LLM_MODEL=gemini-1.5-pro
 GOOGLE_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-1.5-pro
+OPENAI_API_KEY=your_openai_api_key
+ANTHROPIC_API_KEY=your_anthropic_api_key
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1
 ECOMMERCE_DB_PATH=./ecommerce.db
 APP_TITLE=Text-to-SQL Agent
 APP_VERSION=0.1.0
@@ -221,7 +233,7 @@ APP_PORT=8000
 APP_RELOAD=false
 ```
 
-`GOOGLE_API_KEY` is required now. If it is missing, the app will raise a startup error instead of falling back to a local generator.
+`LLM_PROVIDER` chooses the active provider. `GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` is required depending on the selected provider. Ollama does not require a key, but it does require a running local server and the correct `OLLAMA_BASE_URL`.
 
 ### Mock Data
 

@@ -4,11 +4,11 @@ import os
 from pathlib import Path
 
 from fastapi import FastAPI
-from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 from agent.graph import build_graph
+from agent.llm import build_llm_from_env
 from agent.state import initial_state
 
 
@@ -37,15 +37,6 @@ class AskResponse(BaseModel):
 	final_answer: str = ""
 
 
-def _build_gemini_llm() -> ChatGoogleGenerativeAI:
-	api_key = os.getenv("GOOGLE_API_KEY")
-	if not api_key:
-		raise RuntimeError("GOOGLE_API_KEY is required. Add it to the project .env file before starting the app.")
-
-	model_name = os.getenv("GEMINI_MODEL", "gemma-4-31b-it")
-	return ChatGoogleGenerativeAI(model=model_name, temperature=0)
-
-
 def create_app() -> FastAPI:
 	load_dotenv()
 
@@ -55,7 +46,7 @@ def create_app() -> FastAPI:
 	app_host = os.getenv("APP_HOST", "127.0.0.1")
 	app_port = int(os.getenv("APP_PORT", "8000"))
 	app_reload = _get_bool_env("APP_RELOAD", False)
-	llm = _build_gemini_llm()
+	llm = build_llm_from_env()
 	graph = build_graph(db_path=database_path, llm=llm)
 
 	app = FastAPI(title=app_title, version=app_version)

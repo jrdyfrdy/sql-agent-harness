@@ -39,6 +39,8 @@ def _invoke_structured(llm: SupportsInvoke, schema: type[StructuredModel], promp
         return response
     if isinstance(response, dict):
         return schema.model_validate(response)
+    if isinstance(response, str):
+        return schema.model_validate_json(response)
     return schema.model_validate(response)
 
 
@@ -72,26 +74,19 @@ def build_sql_prompt(question: str, schema_hint: str, error_message: str = "") -
         "Follow these rules exactly:\n"
         "- Rule for Dates and Timestamps: When querying date or timestamp columns, NEVER use BETWEEN.\n"
         "  Always use >= for the start date and < for the day after the end date.\n"
-        "- Rule for String Filtering: When filtering by string values, always ensure case-insensitivity.\n"
-        "  Use LOWER(column_name) = 'value' or use ILIKE if supported by the SQL dialect.\n"
+        "- Rule for String Filtering: Never assume capitalization. When filtering by string values, always ensure case-insensitivity by using LOWER(column_name) = 'lowercased_value'.\n"
+        "- Rule for Aggregations: When using aggregate functions like SUM(), AVG(), or MAX(), always wrap them in COALESCE(..., 0) to ensure a 0 is returned instead of NULL if no rows match.\n"
         "- Rule for Status Codes: The status column in the orders and order_facts tables only contains lowercase values:\n"
         "  ['completed', 'pending', 'canceled', 'refunded']. Always use lowercase when filtering on this column.\n"
-        "- Return only a valid structured object with fields 'query' and 'explanation'.\n"
-        "- Do not wrap the SQL in markdown fences.\n"
+        "- Output Format: Return ONLY a valid JSON object with exactly two keys: 'query' (the SQL string) and 'explanation' (a brief explanation of the logic). Do not wrap the JSON or SQL in markdown fences.\n"
         "- Use only read-only SQL. Avoid INSERT, UPDATE, DELETE, DROP, and CREATE.\n"
         "\nFew-shot example:\n"
         "User Question: What was the total quantity of Accessories sold to US customers in July 2024?\n"
-        "Expected SQL:\n"
-        "SELECT\n"
-        "    SUM(quantity) AS total_accessories_qty\n"
-        "FROM\n"
-        "    order_facts\n"
-        "WHERE\n"
-        "    category = 'Accessories'\n"
-        "    AND customer_country = 'US'\n"
-        "    AND LOWER(status) = 'completed'\n"
-        "    AND order_date >= '2024-07-01'\n"
-        "    AND order_date < '2024-08-01';\n"
+        "Expected JSON Response:\n"
+        "{\n"
+        "  \"query\": \"SELECT COALESCE(SUM(quantity), 0) AS total_accessories_qty FROM order_facts WHERE LOWER(category) = 'accessories' AND LOWER(customer_country) = 'us' AND LOWER(status) = 'completed' AND order_date >= '2024-07-01' AND order_date < '2024-08-01'\",\n"
+        "  \"explanation\": \"Calculates the total quantity by summing the quantity column, coercing nulls to 0. Filters are applied case-insensitively using LOWER(), and date boundaries are set for the month of July 2024.\"\n"
+        "}\n"
         f"\nSchema reference:\n{schema_hint}\n"
         f"Question: {question}\n"
         f"{retry_guidance}"

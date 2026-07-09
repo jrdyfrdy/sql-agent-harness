@@ -40,7 +40,7 @@ class AskResponse(BaseModel):
 def create_app() -> FastAPI:
 	load_dotenv()
 
-	database_path = Path(os.getenv("ECOMMERCE_DB_PATH", str(PROJECT_ROOT / "ecommerce.db")))
+	database_path = Path(os.getenv("DB_PATH", str(PROJECT_ROOT / "ecommerce.db")))
 	app_title = os.getenv("APP_TITLE", "Text-to-SQL Agent")
 	app_version = os.getenv("APP_VERSION", "0.1.0")
 	app_host = os.getenv("APP_HOST", "127.0.0.1")

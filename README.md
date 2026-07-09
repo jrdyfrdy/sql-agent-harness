@@ -1,202 +1,144 @@
-## Text-to-SQL Agent Harness
+# 🗄️ Text-to-SQL Agent Harness
 
-Production-oriented Text-to-SQL harness built with LangGraph, DuckDB, FastAPI, and Pydantic. The agent accepts a natural-language ecommerce question, uses a configurable chat model to decide whether clarification is needed, generates DuckDB SQL, executes it in a read-only sandbox, and returns a structured response. It also has a retry loop that can use DuckDB error messages to repair failed queries.
+[![Python 3.14](https://img.shields.io/badge/python-3.14%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![GitHub stars](https://img.shields.io/github/stars/jrdyfrdy/sql-agent-harness.svg?style=social&label=Star)](https://github.com/jrdyfrdy/sql-agent-harness)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
 
-### What it does
+A production-oriented Text-to-SQL harness built with **LangGraph**, **DuckDB**, **FastAPI**, and **Pydantic**.
 
-- Seeds a local `ecommerce.db` DuckDB database with realistic ecommerce data.
-- Exposes a single `POST /ask` endpoint through FastAPI.
-- Routes the question through a LangGraph workflow.
-- Uses a configurable LLM provider for clarification decisions, SQL generation, and summarization.
-- Executes SQL read-only and summarizes the result.
-- Rejects unsafe or multi-statement SQL before it reaches DuckDB.
+Connect this agent to your own database, and it will accept natural-language questions, use a configurable LLM to determine if clarification is needed, generate DuckDB SQL, execute it in a secure sandbox, and return a structured response. It features a built-in self-healing loop that utilizes DuckDB error messages to repair failed queries on the fly.
 
-### Project Structure
+**Perfect for:** Building internal BI chatbots, querying your own DuckDB databases with natural language, learning LangGraph workflows, or evaluating local/cloud LLMs for SQL generation.
 
-```text
-sql-agent-harness/
-├── data/
-│   └── setup_db.py        # Recreates and seeds ecommerce.db
-├── agent/
-│   ├── state.py           # Typed graph state and SQL generation schema
-│   ├── nodes.py           # Ambiguity routing, SQL generation, execution, summarization
-│   ├── edges.py           # Route helpers for conditional graph edges
-│   └── graph.py           # Graph compilation and demo stream helper
-├── main.py                # FastAPI app and /ask endpoint
-├── requirements.txt
-├── ecommerce.db           # Generated DuckDB database file
-├── .env                   # Local environment variables, including API keys
-└── .env.sample            # Template for local environment variables
+## 📑 Table of Contents
+
+- [Features](#-features)
+- [Architecture Overview](#-architecture-overview)
+- [Requirements](#-requirements)
+- [Installation & Setup](#-installation--setup)
+- [Usage](#-usage)
+- [Troubleshooting](#-troubleshooting)
+- [Contributing](#-contributing)
+- [Project Structure](#-project-structure)
+- [Roadmap](#-roadmap)
+
+## ✨ Features
+
+- **Bring Your Own Database (BYOD)**: Easily configure the agent to query your own custom DuckDB database.
+- **Ready-to-Use Sandbox**: Don't have a database handy? Use the included setup script to generate a dummy `ecommerce.db` with realistic mock data for immediate testing and prototyping.
+- **Intelligent Query Generation**: Uses a configurable LLM provider to handle clarification decisions, generate structured DuckDB SQL, and summarize results.
+- **Multi-Provider Support**: Seamlessly switch between Gemini, OpenAI-compatible chat models, Anthropic, or Ollama for locally deployed models.
+- **Agentic Workflow**: Routes questions through a LangGraph workflow with a self-correction loop that can retry SQL generation up to three times upon execution errors.
+- **Strict Security Guardrails**: Rejects unsafe or multi-statement SQL before it reaches DuckDB and executes all queries in a read-only sandbox.
+- **RESTful API**: Exposes a clean, single `POST /ask` endpoint through FastAPI.
+
+## 🧠 Architecture Overview
+
+The graph state tracks conversational fields alongside a structured SQL payload model (`SqlGeneration`), keeping SQL generation strongly typed.
+
+```mermaid
+graph TD
+    User([User Question]) --> AmbiguityRouter{Ambiguity Router}
+    AmbiguityRouter -- Needs Clarification --> FinalSummarizer([Return Clarification Request])
+    AmbiguityRouter -- Clear Question --> SQLGenerator(SQL Generator)
+    SQLGenerator --> SQLExecutor(SQL Executor)
+
+    SQLExecutor -- Error / Invalid SQL --> RetryLogic{Retry < 3?}
+    RetryLogic -- Yes --> SQLGenerator
+    RetryLogic -- No --> FinalSummarizer
+
+    SQLExecutor -- Success --> FinalSummarizer([Final Natural Language Answer])
 ```
 
-### Architecture Overview
+**Security Guardrails:**
+The executor is intentionally conservative. It allows only a single `SELECT` or `WITH` statement. Multi-statement SQL is rejected, non-read-only statements (`DROP`, `INSERT`, `UPDATE`) are blocked, and DuckDB is strictly opened in `read_only=True` mode.
 
-The current graph is intentionally small and easy to reason about:
-
-1. `ambiguity_router` checks whether the question is too vague to query reliably.
-2. `sql_generator` produces a DuckDB query.
-3. `sql_executor` runs the query in read-only mode against `ecommerce.db`.
-4. `final_summarizer` turns the JSON result into a concise natural-language answer.
-
-If the executor returns an error, the graph can loop back into SQL generation up to three times. That gives the agent a simple self-correction loop without letting it run forever.
-
-### State Model
-
-The graph state tracks:
-
-- `question`
-- `sql_query`
-- `db_result`
-- `error_message`
-- `retry_count`
-- `needs_clarification`
-- `clarification_message`
-- `final_answer`
-
-There is also a structured SQL payload model, `SqlGeneration`, which keeps SQL generation typed instead of relying on free-form text cleanup.
-
-### LLM Providers
-
-The app requires a chat model at startup, but it is not tied to a single provider.
-
-Supported providers today:
-
-- Gemini
-- OpenAI-compatible chat models
-- Anthropic
-- Ollama for locally deployed models
-
-The configured provider is used to:
-
-- decide whether a question needs clarification
-- generate structured DuckDB SQL
-- write the final natural-language summary
-
-The graph expects structured output for the clarification and SQL nodes, which keeps the control flow deterministic without relying on regex cleanup or keyword heuristics.
-
-### Prompt Rules
-
-The SQL generation prompt includes explicit guardrails to reduce common query bugs:
-
-- When querying date or timestamp columns, never use `BETWEEN`.
-- Always use `>=` for the start date and `<` for the day after the end date.
-- When filtering by string values, always make the comparison case-insensitive.
-- Use `LOWER(column_name) = 'value'` or `ILIKE` when appropriate.
-- The `status` column in `orders` and `order_facts` only contains lowercase values: `completed`, `pending`, `canceled`, and `refunded`.
-- Always filter `status` using lowercase values.
-
-The prompt also includes a few-shot example for the most common date/string filter pattern:
-
-```text
-User Question: What was the total quantity of Accessories sold to US customers in July 2024?
-Expected SQL:
-SELECT
-    SUM(quantity) AS total_accessories_qty
-FROM
-    order_facts
-WHERE
-    category = 'Accessories'
-    AND customer_country = 'US'
-    AND LOWER(status) = 'completed'
-    AND order_date >= '2024-07-01'
-    AND order_date < '2024-08-01';
-```
-
-### Security Model
-
-The executor is intentionally conservative:
-
-- only a single `SELECT` or `WITH` statement is allowed
-- multi-statement SQL is rejected
-- non-read-only statements like `DROP`, `INSERT`, or `UPDATE` are blocked before the database opens
-- DuckDB is opened in `read_only=True` mode
-
-### Requirements
+## 📦 Requirements
 
 - Python 3.14+
 - DuckDB
-- FastAPI
-- Uvicorn
+- FastAPI & Uvicorn
 - Pydantic 2
-- LangGraph
-- LangChain Core
+- LangGraph & LangChain Core
 - langchain-google-genai
 - python-dotenv
 
-### Installation
+## 🚀 Installation & Setup
 
-Create a virtual environment and install dependencies:
+**1. Clone the repository**
 
 ```bash
-python -m venv .venv
-venv\Scripts\activate
+git clone https://github.com/jrdyfrdy/sql-agent-harness.git
+cd sql-agent-harness
+```
+
+**2. Set up the virtual environment**
+Create and activate a virtual environment, then install the dependencies:
+
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows use: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-This repository already includes a `venv/` folder, so on Windows you can also use:
+**3. Configure Environment Variables**
+Copy the sample environment file and configure your preferred provider:
 
 ```bash
-venv\Scripts\python.exe -m pip install -r requirements.txt
+cp .env.sample .env
 ```
 
-If you run `python main.py` with a Python interpreter that does not have the project dependencies installed, you will see `ModuleNotFoundError: No module named 'fastapi'`. In that case, activate the repo venv or run the app with `venv\Scripts\python.exe main.py`.
+Key variables in `.env`:
 
-### Database Setup
+- `LLM_PROVIDER`: Set to `gemini`, `openai`, `anthropic`, or `ollama`.
+- `OLLAMA_BASE_URL`: Required only if using a local Ollama server (e.g., `http://localhost:11434`).
+- `DB_PATH`: Update this path to point to your own DuckDB database, or leave it as `./ecommerce.db` to use the dummy sandbox data.
 
-Generate the local DuckDB database:
+**4. Generate the Dummy Database (Optional)**
+If you are not using your own database, you can generate and seed the local dummy DuckDB database:
 
 ```bash
 python data/setup_db.py
 ```
 
-By default this creates `ecommerce.db` in the project root. You can override the output path with `--db-path`.
+_By default, this creates `ecommerce.db` in the project root._
 
-### Running the API
+## 💻 Usage
 
-Start the FastAPI app with Uvicorn:
+**Start the API Server**
+Start the FastAPI app directly with Uvicorn:
 
 ```bash
 uvicorn main:app --reload
 ```
 
-Or run the module directly:
+_(Alternatively, you can run the module directly via Python:)_
 
 ```bash
-venv\Scripts\python.exe main.py
+python main.py
 ```
 
-### API Usage
+### API Endpoints
 
-#### `GET /health`
+**Health Check**
 
-Returns a simple readiness check:
-
-```json
-{ "status": "ok" }
+```bash
+curl http://127.0.0.1:8000/health
 ```
 
-#### `POST /ask`
+**Response:** `{ "status": "ok" }`
 
-Request:
+**Ask a Question**
+Send a natural-language question about your database (or the dummy ecommerce database).
 
-```json
-{
-  "question": "Show completed order revenue for July 2024"
-}
+```bash
+curl -X POST http://127.0.0.1:8000/ask \
+     -H "Content-Type: application/json" \
+     -d '{"question": "Show completed order revenue for July 2024"}'
 ```
 
-Response fields:
-
-- `question`
-- `needs_clarification`
-- `clarification_message`
-- `sql_query`
-- `db_result`
-- `error_message`
-- `retry_count`
-- `final_answer`
-
-Example response:
+**Response Output:**
 
 ```json
 {
@@ -211,65 +153,58 @@ Example response:
 }
 ```
 
-### Environment Variables
+## 🛠️ Troubleshooting
 
-Create a `.env` file in the project root when you want to configure local overrides. The easiest path is to copy `.env.sample` and fill in the values you want to use.
+- **DuckDB Lock Error (`IO Error: Could not set lock on file`)**: DuckDB allows only one process to hold a write lock. Ensure no other scripts or database viewers (like DBeaver) are connected to your database without read-only mode enabled.
+- **Ollama Connection Refused**: If `LLM_PROVIDER=ollama`, ensure the Ollama application is running in the background and the model specified in `LLM_MODEL` has been pulled (`ollama pull <model-name>`).
 
-Common values:
+## 🤝 Contributing
 
-```env
-LLM_PROVIDER=gemini
-LLM_MODEL=gemini-1.5-pro
-GOOGLE_API_KEY=your_gemini_api_key
-OPENAI_API_KEY=your_openai_api_key
-ANTHROPIC_API_KEY=your_anthropic_api_key
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.1
-ECOMMERCE_DB_PATH=./ecommerce.db
-APP_TITLE=Text-to-SQL Agent
-APP_VERSION=0.1.0
-APP_HOST=127.0.0.1
-APP_PORT=8000
-APP_RELOAD=false
+Contributions are welcome! If you'd like to improve the harness:
+
+1. Fork the repository.
+2. Create a new feature branch (`git checkout -b feature/amazing-feature`).
+3. Commit your changes (`git commit -m 'Add some amazing feature'`).
+4. Push to the branch (`git push origin feature/amazing-feature`).
+5. Open a Pull Request.
+
+**Running Tests**
+_(To do: Add test execution command here once tests are implemented, e.g., `pytest tests/`)_
+
+## 📂 Project Structure
+
+```text
+sql-agent-harness/
+├── agent/
+│   ├── __init__.py        # Package initialization
+│   ├── edges.py           # Route helpers for conditional graph edges
+│   ├── graph.py           # Graph compilation and demo stream helper
+│   ├── llm.py             # LLM provider configuration and instantiation
+│   ├── nodes.py           # Ambiguity routing, SQL generation, execution, summarization
+│   └── state.py           # Typed graph state and SQL generation schema
+├── data/
+│   └── setup_db.py        # Recreates and seeds ecommerce.db
+├── .env                   # Local environment variables (git ignored)
+├── .env.sample            # Template for local environment variables
+├── .gitignore             # Specifies intentionally untracked files
+├── ecommerce.db           # Generated DuckDB database file (git ignored)
+├── LICENSE                # Open source license
+├── main.py                # FastAPI app and /ask endpoint
+├── README.md              # Project documentation
+└── requirements.txt       # Project dependencies
 ```
 
-`LLM_PROVIDER` chooses the active provider. `GOOGLE_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY` is required depending on the selected provider. Ollama does not require a key, but it does require a running local server and the correct `OLLAMA_BASE_URL`.
+_(Note: `venv/` and `__pycache__/` directories are intentionally excluded from this tree as they are system/generated folders)._
 
-### Mock Data
-
-The seeded database includes:
-
-- customers
-- products
-- orders
-- order items
-- a derived `order_facts` view for easier analytical queries
-
-The sample data intentionally includes:
-
-- active and inactive customers
-- active and inactive products
-- completed, pending, canceled, and refunded orders
-- low-stock products
-- multiple line items per order
-
-That mix helps the agent exercise joins, grouping, filtering, and error correction.
-
-### Development Notes
-
-- `ecommerce.db` is generated locally and ignored by git.
-- The codebase is organized so the graph can use a live Gemini model without changing the FastAPI surface.
-- The current graph is intentionally minimal; it is a strong base for adding richer prompt templates, structured model calls, and semantic caching later.
-
-### Roadmap
+## 🗺️ Roadmap
 
 Planned next improvements:
 
-- refine Gemini prompts for clarification and SQL generation
-- add richer SQL validation and result formatting
-- add caching for repeated questions
-- add more comprehensive tests around edge cases and query repair
+- Refine system prompts for clarification and SQL generation.
+- Add richer SQL validation and result formatting.
+- Add caching for repeated questions.
+- Add more comprehensive tests around edge cases and query repair.
 
-### License
+## 📄 License
 
 See [LICENSE](LICENSE).

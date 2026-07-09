@@ -69,7 +69,7 @@ The executor is intentionally conservative. It allows only a single `SELECT` or 
 **1. Clone the repository**
 
 ```bash
-git clone [https://github.com/jrdyfrdy/sql-agent-harness.git](https://github.com/jrdyfrdy/sql-agent-harness.git)
+git clone https://github.com/jrdyfrdy/sql-agent-harness.git
 cd sql-agent-harness
 ```
 
@@ -124,7 +124,7 @@ python main.py
 **Health Check**
 
 ```bash
-curl [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+curl http://127.0.0.1:8000/health
 ```
 
 **Response:** `{ "status": "ok" }`
@@ -133,7 +133,7 @@ curl [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
 Send a natural-language question about your database (or the dummy ecommerce database).
 
 ```bash
-curl -X POST [http://127.0.0.1:8000/ask](http://127.0.0.1:8000/ask) \
+curl -X POST http://127.0.0.1:8000/ask \
      -H "Content-Type: application/json" \
      -d '{"question": "Show completed order revenue for July 2024"}'
 ```

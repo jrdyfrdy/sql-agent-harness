@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Protocol, TypeVar
+from typing import Any, Protocol, TypeVar, List, Dict
 
 import duckdb
 from pydantic import BaseModel, Field
 
 from .state import GraphState, SqlGeneration
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DB_PATH = PROJECT_ROOT / "ecommerce.db"
 
 MAX_RETRIES = 3
 READ_ONLY_PREFIXES = ("select", "with")
@@ -44,10 +42,12 @@ def _invoke_structured(llm: SupportsInvoke, schema: type[StructuredModel], promp
     return schema.model_validate(response)
 
 
-def ambiguity_router(state: GraphState, llm: SupportsInvoke) -> GraphState:
+def ambiguity_router(state: GraphState, llm: SupportsInvoke, db_config: Dict[str, Any]) -> GraphState:
     question = state.get("question", "")
+    domain = db_config.get("domain_context", "business")
+    
     prompt = (
-        "You are deciding whether an ecommerce analytics question is precise enough for SQL generation.\n"
+        f"You are deciding whether a {domain} analytics question is precise enough for SQL generation.\n"
         "Return a structured object with fields 'needs_clarification' and 'clarification_message'.\n"
         "Ask for clarification when the question is vague, underspecified, or missing a metric, time range, or entity.\n"
         "If no clarification is needed, set 'needs_clarification' to false and 'clarification_message' to an empty string.\n"
@@ -61,7 +61,7 @@ def ambiguity_router(state: GraphState, llm: SupportsInvoke) -> GraphState:
     }
 
 
-def build_sql_prompt(question: str, schema_hint: str, error_message: str = "") -> str:
+def build_sql_prompt(question: str, db_config: Dict[str, Any], error_message: str = "") -> str:
     retry_guidance = ""
     if error_message:
         retry_guidance = (
@@ -69,49 +69,30 @@ def build_sql_prompt(question: str, schema_hint: str, error_message: str = "") -
             f"{error_message}\n"
         )
 
+    domain = db_config.get("domain_context", "business")
+    schema_hint = db_config.get("schema_hint", "")
+    rules = "\n".join([f"- {rule}" for rule in db_config.get("business_rules", [])])
+    few_shot = db_config.get("few_shot_examples", "")
+
     return (
-        "You are a senior analytics engineer writing DuckDB SQL for an ecommerce schema.\n"
+        f"You are a senior analytics engineer writing DuckDB SQL for a {domain} schema.\n"
         "Follow these rules exactly:\n"
-        "- Rule for Dates and Timestamps: When querying date or timestamp columns, NEVER use BETWEEN.\n"
-        "  Always use >= for the start date and < for the day after the end date.\n"
-        "- Rule for String Filtering: Never assume capitalization. When filtering by string values, always ensure case-insensitivity by using LOWER(column_name) = 'lowercased_value'.\n"
-        "- Rule for Aggregations: When using aggregate functions like SUM(), AVG(), or MAX(), always wrap them in COALESCE(..., 0) to ensure a 0 is returned instead of NULL if no rows match.\n"
-        "- Rule for Status Codes: The status column in the orders and order_facts tables only contains lowercase values:\n"
-        "  ['completed', 'pending', 'canceled', 'refunded']. Always use lowercase when filtering on this column.\n"
+        f"{rules}\n"
         "- Output Format: Return ONLY a valid JSON object with exactly two keys: 'query' (the SQL string) and 'explanation' (a brief explanation of the logic). Do not wrap the JSON or SQL in markdown fences.\n"
         "- Use only read-only SQL. Avoid INSERT, UPDATE, DELETE, DROP, and CREATE.\n"
-        "\nFew-shot example:\n"
-        "User Question: What was the total quantity of Accessories sold to US customers in July 2024?\n"
-        "Expected JSON Response:\n"
-        "{\n"
-        "  \"query\": \"SELECT COALESCE(SUM(quantity), 0) AS total_accessories_qty FROM order_facts WHERE LOWER(category) = 'accessories' AND LOWER(customer_country) = 'us' AND LOWER(status) = 'completed' AND order_date >= '2024-07-01' AND order_date < '2024-08-01'\",\n"
-        "  \"explanation\": \"Calculates the total quantity by summing the quantity column, coercing nulls to 0. Filters are applied case-insensitively using LOWER(), and date boundaries are set for the month of July 2024.\"\n"
-        "}\n"
+        "\nFew-shot examples:\n"
+        f"{few_shot}\n"
         f"\nSchema reference:\n{schema_hint}\n"
         f"Question: {question}\n"
         f"{retry_guidance}"
     )
 
 
-def schema_hint() -> str:
-    return """
-tables:
-  customers(customer_id, first_name, last_name, email, country, created_at, is_active)
-  products(product_id, product_name, category, unit_price, unit_cost, stock_qty, is_active)
-  orders(order_id, customer_id, order_date, status, payment_method, shipping_country)
-  order_items(order_item_id, order_id, product_id, quantity, unit_price, discount_pct)
-view:
-  order_facts(order_id, order_date, status, payment_method, shipping_country, customer_id,
-              first_name, last_name, customer_country, product_id, product_name, category,
-              quantity, unit_price, discount_pct, line_total)
-""".strip()
-
-
-def sql_generator(state: GraphState, llm: SupportsInvoke) -> GraphState:
+def sql_generator(state: GraphState, llm: SupportsInvoke, db_config: Dict[str, Any]) -> GraphState:
     question = state.get("question", "")
     error_message = state.get("error_message", "")
 
-    prompt = build_sql_prompt(question, schema_hint(), error_message)
+    prompt = build_sql_prompt(question, db_config, error_message)
     generation = SqlGeneration.model_validate(_invoke_structured(llm, SqlGeneration, prompt))
 
     return {"sql_query": generation.query.strip(), "generation": generation}
@@ -145,15 +126,21 @@ def sql_executor(state: GraphState, db_path: Path | None = None) -> GraphState:
     except ValueError as exc:
         return {"error_message": str(exc), "db_result": "", "retry_count": state.get("retry_count", 0) + 1}
 
-    database_path = db_path or DEFAULT_DB_PATH
-    if not database_path.exists():
+    if not db_path:
         return {
             "db_result": "",
-            "error_message": f"Database file not found: {database_path}",
+            "error_message": "Database path was not provided to the executor.",
             "retry_count": state.get("retry_count", 0) + 1,
         }
 
-    connection = duckdb.connect(str(database_path), read_only=True)
+    if not db_path.exists():
+        return {
+            "db_result": "",
+            "error_message": f"Database file not found: {db_path}",
+            "retry_count": state.get("retry_count", 0) + 1,
+        }
+
+    connection = duckdb.connect(str(db_path), read_only=True)
     try:
         result = connection.execute(sql_query).fetchdf()
         return {
@@ -171,12 +158,13 @@ def sql_executor(state: GraphState, db_path: Path | None = None) -> GraphState:
         connection.close()
 
 
-def final_summarizer(state: GraphState, llm: SupportsInvoke) -> GraphState:
+def final_summarizer(state: GraphState, llm: SupportsInvoke, db_config: Dict[str, Any]) -> GraphState:
     question = state.get("question", "")
     db_result = state.get("db_result", "")
+    domain = db_config.get("domain_context", "business")
 
     prompt = (
-        "Write a concise business answer for this ecommerce question.\n"
+        f"Write a concise business answer for this {domain} question.\n"
         f"Question: {question}\n"
         f"Data: {db_result}\n"
     )

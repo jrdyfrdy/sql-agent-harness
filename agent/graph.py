@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -10,16 +10,16 @@ from .nodes import ambiguity_router, final_summarizer, sql_executor, sql_generat
 from .state import GraphState, initial_state
 
 
-def build_graph(db_path: Path | None = None, llm: Any | None = None):
+def build_graph(db_config: Dict[str, Any], db_path: Path | None = None, llm: Any | None = None):
     if llm is None:
-        raise RuntimeError("A Gemini LLM is required to build the graph.")
+        raise RuntimeError("A language model (LLM) is required to build the graph.")
 
     workflow = StateGraph(GraphState)
 
-    workflow.add_node("ambiguity_router", _ambiguity_node(llm))
-    workflow.add_node("sql_generator", _sql_generation_node(llm))
+    workflow.add_node("ambiguity_router", _ambiguity_node(llm, db_config))
+    workflow.add_node("sql_generator", _sql_generation_node(llm, db_config))
     workflow.add_node("sql_executor", _executor_node(db_path))
-    workflow.add_node("final_summarizer", _summarizer_node(llm))
+    workflow.add_node("final_summarizer", _summarizer_node(llm, db_config))
 
     workflow.add_edge(START, "ambiguity_router")
     workflow.add_conditional_edges(
@@ -52,29 +52,29 @@ def _executor_node(db_path: Path | None):
     return executor
 
 
-def _ambiguity_node(llm: Any):
+def _ambiguity_node(llm: Any, db_config: Dict[str, Any]):
     def node(state: GraphState) -> GraphState:
-        return ambiguity_router(state, llm=llm)
+        return ambiguity_router(state, llm=llm, db_config=db_config)
 
     return node
 
 
-def _sql_generation_node(llm: Any):
+def _sql_generation_node(llm: Any, db_config: Dict[str, Any]):
     def node(state: GraphState) -> GraphState:
-        return sql_generator(state, llm=llm)
+        return sql_generator(state, llm=llm, db_config=db_config)
 
     return node
 
 
-def _summarizer_node(llm: Any):
+def _summarizer_node(llm: Any, db_config: Dict[str, Any]):
     def node(state: GraphState) -> GraphState:
-        return final_summarizer(state, llm=llm)
+        return final_summarizer(state, llm=llm, db_config=db_config)
 
     return node
 
 
-def stream_demo(question: str, db_path: Path | None = None) -> list[dict[str, Any]]:
-    graph = build_graph(db_path=db_path)
+def stream_demo(question: str, db_config: Dict[str, Any], db_path: Path | None = None) -> list[dict[str, Any]]:
+    graph = build_graph(db_config=db_config, db_path=db_path)
     state = initial_state(question)
     events: list[dict[str, Any]] = []
 
@@ -83,7 +83,3 @@ def stream_demo(question: str, db_path: Path | None = None) -> list[dict[str, An
         print(event)
 
     return events
-
-
-if __name__ == "__main__":
-    stream_demo("Show completed order revenue by customer for July 2024")

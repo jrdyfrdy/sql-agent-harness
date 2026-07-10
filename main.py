@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from agent.graph import build_graph
 from agent.llm import build_llm_from_env
 from agent.state import initial_state
+from config import load_db_config
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -23,7 +24,7 @@ def _get_bool_env(name: str, default: bool = False) -> bool:
 
 
 class AskRequest(BaseModel):
-	question: str = Field(..., min_length=1, description="Natural language question about the ecommerce data.")
+	question: str = Field(..., min_length=1, description="Natural language question about the data.")
 
 
 class AskResponse(BaseModel):
@@ -41,13 +42,19 @@ def create_app() -> FastAPI:
 	load_dotenv()
 
 	database_path = Path(os.getenv("DB_PATH", str(PROJECT_ROOT / "ecommerce.db")))
+	config_path = Path(os.getenv("DB_CONFIG_PATH", str(PROJECT_ROOT / "db_config.yaml")))
+	
 	app_title = os.getenv("APP_TITLE", "Text-to-SQL Agent")
 	app_version = os.getenv("APP_VERSION", "0.1.0")
 	app_host = os.getenv("APP_HOST", "127.0.0.1")
 	app_port = int(os.getenv("APP_PORT", "8000"))
 	app_reload = _get_bool_env("APP_RELOAD", False)
+	
 	llm = build_llm_from_env()
-	graph = build_graph(db_path=database_path, llm=llm)
+	
+	db_config = load_db_config(config_path)
+	
+	graph = build_graph(db_config=db_config, db_path=database_path, llm=llm)
 
 	app = FastAPI(title=app_title, version=app_version)
 	app.state.graph = graph

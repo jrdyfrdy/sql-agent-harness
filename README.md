@@ -25,6 +25,7 @@ Connect this agent to your own database, and it will accept natural-language que
 
 ## ✨ Features
 
+- **Database-Agnostic Architecture**: The core agent logic is entirely decoupled from the underlying database. You define your schema, business rules, and few-shot examples in a simple `db_config.yaml` file, and the agent adapts instantly.
 - **Bring Your Own Database (BYOD)**: Easily configure the agent to query your own custom DuckDB database.
 - **Ready-to-Use Sandbox**: Don't have a database handy? Use the included setup script to generate a dummy `ecommerce.db` with realistic mock data for immediate testing and prototyping.
 - **Intelligent Query Generation**: Uses a configurable LLM provider to handle clarification decisions, generate structured DuckDB SQL, and summarize results.
@@ -63,6 +64,7 @@ The executor is intentionally conservative. It allows only a single `SELECT` or 
 - LangGraph & LangChain Core
 - langchain-google-genai
 - python-dotenv
+- PyYAML
 
 ## 🚀 Installation & Setup
 
@@ -94,6 +96,7 @@ Key variables in `.env`:
 - `LLM_PROVIDER`: Set to `gemini`, `openai`, `anthropic`, or `ollama`.
 - `OLLAMA_BASE_URL`: Required only if using a local Ollama server (e.g., `http://localhost:11434`).
 - `DB_PATH`: Update this path to point to your own DuckDB database, or leave it as `./ecommerce.db` to use the dummy sandbox data.
+- `DB_CONFIG_PATH`: Update this path to point to your custom YAML configuration file, or leave it as `./db_config.yaml` to use the dummy sandbox data configuration.
 
 **4. Generate the Dummy Database (Optional)**
 If you are not using your own database, you can generate and seed the local dummy DuckDB database:
@@ -187,6 +190,8 @@ sql-agent-harness/
 ├── .env                   # Local environment variables (git ignored)
 ├── .env.sample            # Template for local environment variables
 ├── .gitignore             # Specifies intentionally untracked files
+├── config.py              # Configuration loader for the YAML file
+├── db_config.yaml         # Externalized database schema and rules
 ├── ecommerce.db           # Generated DuckDB database file (git ignored)
 ├── LICENSE                # Open source license
 ├── main.py                # FastAPI app and /ask endpoint

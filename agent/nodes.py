@@ -181,7 +181,26 @@ def final_summarizer(state: GraphState, llm: SupportsInvoke) -> GraphState:
         f"Data: {db_result}\n"
     )
     response = llm.invoke(prompt)
-    return {"final_answer": str(response)}
+
+    content = response.content if hasattr(response, "content") else response
+
+    if isinstance(content, str):
+        final_answer = content
+    elif isinstance(content, list):
+        text_parts = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+                elif "text" in block and block.get("type") != "thinking":
+                    text_parts.append(block["text"])
+            elif isinstance(block, str):
+                text_parts.append(block)
+        final_answer = "".join(text_parts)
+    else:
+        final_answer = str(content)
+
+    return {"final_answer": final_answer.strip()}
 
 
 def should_retry(state: GraphState) -> bool:

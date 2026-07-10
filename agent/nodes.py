@@ -71,7 +71,7 @@ def build_sql_prompt(question: str, db_config: Dict[str, Any], error_message: st
 
     domain = db_config.get("domain_context", "business")
     schema_hint = db_config.get("schema_hint", "")
-    rules = "\n".join([f"- {rule}" for rule in db_config.get("business_rules", [])])
+    rules = "\n".join([f"- {rule}" for rule in (db_config.get("business_rules") or [])])
     few_shot = db_config.get("few_shot_examples", "")
 
     return (

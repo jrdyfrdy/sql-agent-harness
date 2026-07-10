@@ -190,9 +190,8 @@ def final_summarizer(state: GraphState, llm: SupportsInvoke) -> GraphState:
         text_parts = []
         for block in content:
             if isinstance(block, dict):
-                if block.get("type") == "text":
-                    text_parts.append(block.get("text", ""))
-                elif "text" in block and block.get("type") != "thinking":
+                block_type = block.get("type")
+                if (block_type == "text" or block_type is None) and "text" in block:
                     text_parts.append(block["text"])
             elif isinstance(block, str):
                 text_parts.append(block)

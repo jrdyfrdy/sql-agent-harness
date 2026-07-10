@@ -126,7 +126,7 @@ def sql_executor(state: GraphState, db_path: Path | None = None) -> GraphState:
     except ValueError as exc:
         return {"error_message": str(exc), "db_result": "", "retry_count": state.get("retry_count", 0) + 1}
 
-    if not db_path:
+    if db_path is None:
         return {
             "db_result": "",
             "error_message": "Database path was not provided to the executor.",

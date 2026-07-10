@@ -1,32 +1,11 @@
-# config.py
-from typing import Dict, Any
+from pathlib import Path
+import yaml
 
-# This configuration can be loaded from a YAML or JSON file in production.
-DB_CONFIG: Dict[str, Any] = {
-    "schema_hint": """
-tables:
-  customers(customer_id, first_name, last_name, email, country, created_at, is_active)
-  products(product_id, product_name, category, unit_price, unit_cost, stock_qty, is_active)
-  orders(order_id, customer_id, order_date, status, payment_method, shipping_country)
-  order_items(order_item_id, order_id, product_id, quantity, unit_price, discount_pct)
-view:
-  order_facts(order_id, order_date, status, payment_method, shipping_country, customer_id,
-              first_name, last_name, customer_country, product_id, product_name, category,
-              quantity, unit_price, discount_pct, line_total)
-""",
-    "domain_context": "ecommerce",
-    "business_rules": [
-        "Rule for Dates and Timestamps: When querying date or timestamp columns, NEVER use BETWEEN. Always use >= for the start date and < for the day after the end date.",
-        "Rule for String Filtering: Never assume capitalization. When filtering by string values, always ensure case-insensitivity by using LOWER(column_name) = 'lowercased_value'.",
-        "Rule for Aggregations: When using aggregate functions like SUM(), AVG(), or MAX(), always wrap them in COALESCE(..., 0) to ensure a 0 is returned instead of NULL if no rows match.",
-        "Rule for Status Codes: The status column in the orders and order_facts tables only contains lowercase values: ['completed', 'pending', 'canceled', 'refunded']. Always use lowercase when filtering on this column."
-    ],
-    "few_shot_examples": """
-User Question: What was the total quantity of Accessories sold to US customers in July 2024?
-Expected JSON Response:
-{
-  "query": "SELECT COALESCE(SUM(quantity), 0) AS total_accessories_qty FROM order_facts WHERE LOWER(category) = 'accessories' AND LOWER(customer_country) = 'us' AND LOWER(status) = 'completed' AND order_date >= '2024-07-01' AND order_date < '2024-08-01'",
-  "explanation": "Calculates the total quantity by summing the quantity column, coercing nulls to 0. Filters are applied case-insensitively using LOWER(), and date boundaries are set for the month of July 2024."
-}
-"""
-}
+def load_db_config(config_path: str | Path) -> dict:
+    """Loads the database configuration from a YAML file."""
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Configuration file not found at: {path}")
+        
+    with open(path, "r", encoding="utf-8") as file:
+        return yaml.safe_load(file)

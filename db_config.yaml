@@ -25,3 +25,10 @@ few_shot_examples: |
     "query": "SELECT COALESCE(SUM(quantity), 0) AS total_accessories_qty FROM order_facts WHERE LOWER(category) = 'accessories' AND LOWER(customer_country) = 'us' AND LOWER(status) = 'completed' AND order_date >= '2024-07-01' AND order_date < '2024-08-01'",
     "explanation": "Calculates the total quantity by summing the quantity column, coercing nulls to 0. Filters are applied case-insensitively using LOWER(), and date boundaries are set for the month of July 2024."
   }
+
+  User Question: List the products that have never been ordered.
+  Expected JSON Response:
+  {
+    "query": "SELECT product_name FROM products WHERE product_id NOT IN (SELECT oi.product_id FROM order_items oi JOIN orders o ON oi.order_id = o.order_id WHERE LOWER(o.status) = 'completed')",
+    "explanation": "When looking for records that do not exist in another table, use a WHERE NOT IN clause (or a LEFT JOIN with an IS NULL in the WHERE clause, not the ON clause). This correctly filters the products table against the list of products that have been successfully ordered."
+  }

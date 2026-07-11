@@ -202,9 +202,11 @@ def final_summarizer(state: GraphState, llm: SupportsInvoke, db_config: Dict[str
     domain = db_config.get("domain_context", "business")
 
     prompt = (
-        f"Write a concise business answer for this {domain} question.\n"
-        f"Question: {question}\n"
-        f"Data: {db_result}\n"
+        f"You are a helpful data assistant reporting on a {domain} database.\n"
+        f"The user asked: {question}\n"
+        f"The database returned this exact data: {db_result}\n"
+        "Draft a natural language response that directly answers the user's question using ONLY the provided data. "
+        "Assume the data is correct and perfectly answers the question. Do not state that data is missing."
     )
     response = llm.invoke(prompt)
 

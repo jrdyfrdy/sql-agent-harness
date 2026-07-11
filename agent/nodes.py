@@ -97,9 +97,47 @@ def sql_generator(state: GraphState, llm: SupportsInvoke, db_config: Dict[str, A
 
 
 def normalize_sql(sql_query: str) -> str:
-    sql_query = re.sub(r'--.*', '', sql_query)
-    sql_query = re.sub(r'/\*.*?\*/', '', sql_query, flags=re.DOTALL)
-    return sql_query.strip().rstrip(";").strip()
+    result = []
+    i = 0
+    n = len(sql_query)
+    in_single_quote = False
+    in_double_quote = False
+
+    while i < n:
+        if in_single_quote:
+            if sql_query[i] == "'" and (i == 0 or sql_query[i-1] != "\\"):
+                in_single_quote = False
+            result.append('x')
+            i += 1
+        elif in_double_quote:
+            if sql_query[i] == '"' and (i == 0 or sql_query[i-1] != "\\"):
+                in_double_quote = False
+            result.append('x')
+            i += 1
+        else:
+            if sql_query[i:i+2] == '--':
+                i += 2
+                while i < n and sql_query[i] != '\n':
+                    i += 1
+            elif sql_query[i:i+2] == '/*':
+                i += 2
+                while i < n and sql_query[i:i+2] != '*/':
+                    i += 1
+                i += 2
+            elif sql_query[i] == "'":
+                in_single_quote = True
+                result.append("'")
+                i += 1
+            elif sql_query[i] == '"':
+                in_double_quote = True
+                result.append('"')
+                i += 1
+            else:
+                result.append(sql_query[i])
+                i += 1
+
+    normalized = "".join(result)
+    return normalized.strip().rstrip(";").strip()
 
 
 def is_read_only_sql(sql_query: str) -> bool:

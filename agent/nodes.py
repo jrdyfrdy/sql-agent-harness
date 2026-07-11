@@ -1,12 +1,10 @@
 from __future__ import annotations
-
 from pathlib import Path
 from typing import Any, Protocol, TypeVar, List, Dict
-
-import duckdb
 from pydantic import BaseModel, Field
-
 from .state import GraphState, SqlGeneration
+import duckdb
+import re
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -99,6 +97,8 @@ def sql_generator(state: GraphState, llm: SupportsInvoke, db_config: Dict[str, A
 
 
 def normalize_sql(sql_query: str) -> str:
+    sql_query = re.sub(r'--.*', '', sql_query)
+    sql_query = re.sub(r'/\*.*?\*/', '', sql_query, flags=re.DOTALL)
     return sql_query.strip().rstrip(";").strip()
 
 
@@ -117,7 +117,7 @@ def validate_sql_query(sql_query: str) -> str:
         raise ValueError("No SQL query was generated.")
     if not is_read_only_sql(normalized):
         raise ValueError("Only a single read-only SELECT or WITH statement is allowed.")
-    return normalized
+    return sql_query
 
 
 def sql_executor(state: GraphState, db_path: Path | None = None) -> GraphState:

@@ -8,7 +8,7 @@ from langgraph.graph import END, START, StateGraph
 from .edges import route_after_ambiguity, route_after_executor
 from .nodes import ambiguity_router, final_summarizer, sql_executor, sql_generator
 from .state import GraphState, initial_state
-
+from .llm import build_llm_from_env
 
 def build_graph(db_config: Dict[str, Any], db_path: Path | None = None, llm: Any | None = None):
     if llm is None:
@@ -74,7 +74,16 @@ def _summarizer_node(llm: Any, db_config: Dict[str, Any]):
 
 
 def stream_demo(question: str, db_config: Dict[str, Any], db_path: Path | None = None) -> list[dict[str, Any]]:
-    graph = build_graph(db_config=db_config, db_path=db_path)
+    """Run the graph once and stream its events to stdout.
+
+    Intended for local, terminal-based debugging via `python -m agent.graph`.
+    Requires LLM credentials configured in the environment (see .env.sample)
+    for build_llm_from_env() to resolve a provider — e.g. GOOGLE_API_KEY for
+    the default `gemini` provider, or OPENAI_API_KEY / ANTHROPIC_API_KEY when
+    LLM_PROVIDER is set accordingly.
+    """
+    llm = build_llm_from_env()
+    graph = build_graph(db_config=db_config, db_path=db_path, llm=llm)
     state = initial_state(question)
     events: list[dict[str, Any]] = []
 
@@ -83,3 +92,19 @@ def stream_demo(question: str, db_config: Dict[str, Any], db_path: Path | None =
         print(event)
 
     return events
+
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+
+    from config import load_db_config
+
+    load_dotenv()
+
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    db_config = load_db_config(PROJECT_ROOT / "db_config.yaml")
+
+    stream_demo(
+        question="How many active customers are there?",
+        db_config=db_config,
+        db_path=PROJECT_ROOT / "ecommerce.db",
+    )
